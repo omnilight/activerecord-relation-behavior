@@ -62,9 +62,10 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 	 */
 	public function beforeValidate($event)
 	{
-		foreach($this->owner->relations() as $name => $relation)
+		foreach($this->owner->metaData->relations as $name => $relation)
 		{
-			switch($relation[0]) // relation type such as BELONGS_TO, HAS_ONE, HAS_MANY, MANY_MANY
+            /** @var CActiveRelation $relation */
+			switch(get_class($relation)) // relation type such as BELONGS_TO, HAS_ONE, HAS_MANY, MANY_MANY
 			{
 				// BELONGS_TO: if the relationship between table A and B is one-to-many, then B belongs to A
 				//             (e.g. Post belongs to User);
@@ -73,7 +74,7 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 
 					// when relation attribute will not be validated,
 					// we do not need to populate it at this point, will do it in beforeSave()
-					if (count($this->owner->getValidators($relation[2])) == 0)
+					if (count($this->owner->getValidators($relation->foreignKey)) == 0)
 						break;
 					if (!$this->owner->hasRelated($name) || !$this->isRelationSupported($relation))
 						break;
@@ -95,9 +96,10 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 		if ($this->useTransaction && $this->owner->dbConnection->currentTransaction===null)
 			$this->_transaction=$this->owner->dbConnection->beginTransaction();
 
-		foreach($this->owner->relations() as $name => $relation)
-		{
-			switch($relation[0]) // relation type such as BELONGS_TO, HAS_ONE, HAS_MANY, MANY_MANY
+        foreach($this->owner->metaData->relations as $name => $relation)
+        {
+            /** @var CActiveRelation $relation */
+			switch(get_class($relation)) // relation type such as BELONGS_TO, HAS_ONE, HAS_MANY, MANY_MANY
 			{
 				// BELONGS_TO: if the relationship between table A and B is one-to-many, then B belongs to A
 				//             (e.g. Post belongs to User);
@@ -125,9 +127,10 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 			/** @var CDbCommandBuilder $commandBuilder */
 			$commandBuilder=$this->owner->dbConnection->commandBuilder;
 
-			foreach($this->owner->relations() as $name => $relation)
-			{
-				switch($relation[0]) // relation type such as BELONGS_TO, HAS_ONE, HAS_MANY, MANY_MANY
+            foreach($this->owner->metaData->relations as $name => $relation)
+            {
+                /** @var CActiveRelation $relation */
+				switch(get_class($relation)) // relation type such as BELONGS_TO, HAS_ONE, HAS_MANY, MANY_MANY
 				{
 					/* MANY_MANY: this corresponds to the many-to-many relationship in database.
 					 *            An associative table is needed to break a many-to-many relationship into one-to-many
@@ -183,18 +186,18 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 							break;
 
 						Yii::trace(
-							'updating '.(($relation[0]==CActiveRecord::HAS_ONE)?'HAS_ONE':'HAS_MANY').
+							'updating '.((get_class($relation)==CActiveRecord::HAS_ONE)?'HAS_ONE':'HAS_MANY').
 							' foreign-key field for relation '.get_class($this->owner).'.'.$name,
 							'system.db.ar.CActiveRecord'
 						);
 
 						$newRelatedRecords=$this->owner->getRelated($name, false);
 
-						if ($relation[0]==CActiveRecord::HAS_MANY && !is_array($newRelatedRecords))
+						if (get_class($relation)==CActiveRecord::HAS_MANY && !is_array($newRelatedRecords))
 							throw new CDbException('A HAS_MANY relation needs to be an array of records or primary keys!');
 
 						// HAS_ONE is special case of HAS_MANY, so we have array with one or no element
-						if ($relation[0]==CActiveRecord::HAS_ONE) {
+						if (get_class($relation)==CActiveRecord::HAS_ONE) {
 							if ($newRelatedRecords===null)
 								$newRelatedRecords=array();
 							else
@@ -202,26 +205,27 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 						}
 
 						// get related records as objects and primary keys
-						$newRelatedRecords=$this->primaryKeysToObjects($newRelatedRecords, $relation[1]);
+						$newRelatedRecords=$this->primaryKeysToObjects($newRelatedRecords, $relation->className);
 						$newPKs=$this->objectsToPrimaryKeys($newRelatedRecords);
 
 						// update all not anymore related records
 						$criteria=new ECompositeDbCriteria();
-						$criteria->addNotInCondition(CActiveRecord::model($relation[1])->tableSchema->primaryKey, $newPKs);
+						$criteria->addNotInCondition(CActiveRecord::model($relation->className)->tableSchema->primaryKey, $newPKs);
 						// @todo add support for composite primary keys
-						$criteria->addColumnCondition(array($relation[2]=>$this->owner->getPrimaryKey()));
-						if (CActiveRecord::model($relation[1])->tableSchema->getColumn($relation[2])->allowNull) {
-							CActiveRecord::model($relation[1])->updateAll(array($relation[2]=>null), $criteria);
+						$criteria->addColumnCondition(array($relation->foreignKey=>$this->owner->getPrimaryKey()));
+						if (CActiveRecord::model($relation->className)->tableSchema->getColumn($relation->foreignKey)->allowNull) {
+							CActiveRecord::model($relation->className)->updateAll(array($relation->foreignKey=>null), $criteria);
 						} else {
-							CActiveRecord::model($relation[1])->deleteAll($criteria);
+							CActiveRecord::model($relation->className)->deleteAll($criteria);
 						}
 
 						/** @var CActiveRecord $record */
 						foreach($newRelatedRecords as $record) {
 							// only save if relation did not exist
 							// @todo add support for composite primary keys
-							if ($record->{$relation[2]}===null || $record->{$relation[2]} !=  $this->owner->getPrimaryKey()) {
-								$record->saveAttributes(array($relation[2] => $this->owner->getPrimaryKey()));
+							if ($record->{$relation->foreignKey}===null || $record->{$relation->foreignKey} !=
+                                $this->owner->getPrimaryKey()) {
+								$record->saveAttributes(array($relation->foreignKey => $this->owner->getPrimaryKey()));
 							}
 						}
 
@@ -244,7 +248,7 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 	/**
 	 * Populates the BELONGS_TO relations attribute with the pk of the related model.
 	 * @param string $name the relation name
-	 * @param array $relation the relation config array
+	 * @param CActiveRelation $relation the relation config array
 	 */
 	protected function populateBelongsToAttribute($name, $relation)
 	{
@@ -262,28 +266,32 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 
 		// @todo add support for composite primary keys
 		if (!is_array($pk)) {
-			$this->owner->setAttribute($relation[2], $pk);
+			$this->owner->setAttribute($relation->foreignKey, $pk);
 		}
 	}
 
 	/**
 	 * do not do anything with relations defined with 'through' or have limiting 'condition'/'scopes' defined
 	 *
-	 * @param array $relation
+	 * @param CActiveRelation $relation
 	 * @return bool
 	 */
 	protected function isRelationSupported($relation)
 	{
-		// @todo not sure about 'together', also check for joinType
-		return !isset($relation['on']) &&
-			   !isset($relation['through']) &&
-			   !isset($relation['condition']) &&
-			   !isset($relation['group']) &&
-			   !isset($relation['join']) &&
-			   !isset($relation['having']) &&
-			   !isset($relation['limit']) && // @todo not sure what to do if limit/offset is set
-			   !isset($relation['offset']) &&
-			   !isset($relation['scopes']);
+        // @todo not sure about 'together', also check for joinType
+        return
+            empty($relation->on) &&
+            ((property_exists($relation, 'through') && is_null($relation->through))
+                || (!property_exists($relation, 'through'))) &&
+            empty($relation->condition) &&
+            empty($relation->group) &&
+            empty($relation->join) &&
+            empty($relation->having) &&
+            ((property_exists($relation, 'limit') && ($relation->limit == -1))
+                || (!property_exists($relation, 'limit'))) && // @todo not sure what to do if limit/offset is set
+            ((property_exists($relation, 'offset') && ($relation->offset == -1))
+                || (!property_exists($relation, 'offset'))) &&
+            empty($relation->scopes);
 	}
 
 	/**
@@ -371,14 +379,14 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 	 *
 	 * @throws CDbException
 	 * @param string $name name of the relation
-	 * @param array $relation relation definition
+	 * @param CManyManyRelation $relation relation definition
 	 * @return array ($joinTable, $fks)
 	 *               joinTable is the many-many-relation-table
 	 *               fks are primary key of that table defining the relation
 	 */
 	protected function parseManyManyFk($name, $relation)
 	{
-		if(!preg_match('/^\s*(.*?)\((.*)\)\s*$/',$relation[2],$matches))
+		if(!preg_match('/^\s*(.*?)\((.*)\)\s*$/',$relation->foreignKey,$matches))
 			throw new CDbException(Yii::t('yii','The relation "{relation}" in active record class "{class}" is specified with an invalid foreign key. The format of the foreign key must be "joinTable(fk1,fk2,...)".',
 				array('{class}'=>get_class($this->owner),'{relation}'=>$name)));
 		if(($joinTable=$this->owner->dbConnection->schema->getTable($matches[1]))===null)
